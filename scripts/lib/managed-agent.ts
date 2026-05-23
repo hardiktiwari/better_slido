@@ -370,10 +370,16 @@ export async function runManagedAgent(cwd: string): Promise<ManagedAgentResult> 
   logs.push(`Mounted ${environmentSources.length} environment source(s)`);
   logs.push(`Invoking client.interactions.create() (timeout ${INTERACTION_TIMEOUT_MS / 1000}s)...`);
 
-  const interaction = await client.interactions.create(
-    interactionConfig as Parameters<typeof client.interactions.create>[0],
+  // The `@google/genai` SDK declares `interactions.create` with multiple overloads;
+  // when called with a `Record<string, unknown>` config TypeScript picks the broadest
+  // overload, which returns `Stream<InteractionSSEEvent> | Interaction`. Since we
+  // request a non-streaming call (no `stream: true`), the runtime response is always
+  // an `Interaction` — cast to a local shape with just the fields we read.
+  type InteractionResponse = { output_text?: string; id?: string };
+  const interaction = (await client.interactions.create(
+    interactionConfig as unknown as Parameters<typeof client.interactions.create>[0],
     { timeout: INTERACTION_TIMEOUT_MS },
-  );
+  )) as unknown as InteractionResponse;
 
   const outputText = interaction.output_text ?? "";
   logs.push(`Interaction complete${interaction.id ? ` (id: ${interaction.id})` : ""}.`);

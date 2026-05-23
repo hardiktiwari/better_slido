@@ -1,18 +1,14 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-@layer base {
-  :root {
-    --bg-mesh-1: #fbfaf7;
-    --bg-mesh-2: #f4f2eb;
-    --paper-color: #fbfaf7;
-    --ink-color: #1c1917;
-    --ink-muted: #57534e;
-    --accent-indigo: #2563eb;
-    --accent-emerald: #10b981;
-    --accent-orange: #f97316;
-  }
+:root {
+  --bg-mesh-1: #fbfaf7;
+  --bg-mesh-2: #f4f2eb;
+  --paper-color: #fbfaf7;
+  --ink-color: #1c1917;
+  --ink-muted: #57534e;
+  --accent-indigo: #2563eb;
+  --accent-emerald: #10b981;
+  --accent-orange: #f97316;
 }
 
 /* Custom Paper Texture */
@@ -68,4 +64,47 @@
 
 .floating-msg {
   animation: floatUp 3.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Slide-up entrance used by bullets, poll rows, Q&A cards. */
+@keyframes slideUp {
+  0% {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.animate-slide-up {
+  animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Floating emoji drift used by audience reactions. Custom property --emoji-tx
+   lets each emoji pick a random horizontal drift offset. */
+@keyframes floatEmoji {
+  0% {
+    transform: translate(0, 0) scale(0.85);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--emoji-tx, 0px), -340px) scale(1.05);
+    opacity: 0;
+  }
+}
+.animate-float-emoji {
+  animation: floatEmoji 4s ease-out forwards;
+}
+
+/* Generic fade-in. */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
 }
