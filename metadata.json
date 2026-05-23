@@ -1,0 +1,6 @@
+{
+  "name": "Better Slido",
+  "description": "An interactive presentation, Q&A, live polling, and real-time audience engagement suite.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
