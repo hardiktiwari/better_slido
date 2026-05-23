@@ -95,7 +95,7 @@ npm run agent:register
 | Tools | `code_execution`, `google_search`, `url_context` |
 | Timeout | 300s |
 
-**Flow:** scan `src/App.tsx` → route directive to a skill (`visual-design` | `text-changes` | `slide-editor`) → mount `AGENTS.md`, all skills, and target file into remote sandbox → Antigravity edits → parse JSON output → write local file.
+**Flow:** recursively scan workspace (`.ts` and `.tsx` files) → route directive to a skill (`visual-design` | `text-changes` | `slide-editor`) → mount `AGENTS.md`, all skills, and target file into remote sandbox → Antigravity edits → parse JSON output → write local file.
 
 ### Skills
 

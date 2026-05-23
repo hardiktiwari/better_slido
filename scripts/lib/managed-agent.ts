@@ -2,7 +2,27 @@ import fs from "fs";
 import path from "path";
 import { GoogleGenAI } from "@google/genai";
 
-export const HARNESS_VERSION = "1.1.0";
+function scanDirectory(dir: string, baseDir: string, fileList: string[] = []): string[] {
+  if (!fs.existsSync(dir)) return fileList;
+  const files = fs.readdirSync(dir);
+  for (const file of files) {
+    const filePath = path.join(dir, file);
+    const stat = fs.statSync(filePath);
+    if (stat.isDirectory()) {
+      if (file !== "node_modules" && file !== "dist" && file !== ".git" && file !== ".agents") {
+        scanDirectory(filePath, baseDir, fileList);
+      }
+    } else {
+      const ext = path.extname(file);
+      if (ext === ".ts" || ext === ".tsx") {
+        fileList.push(path.relative(baseDir, filePath));
+      }
+    }
+  }
+  return fileList;
+}
+
+export const HARNESS_VERSION = "1.2.0";
 export type HarnessSkill = "visual-design" | "text-changes" | "code-resolver" | "slide-editor";
 export const BASE_AGENT = "antigravity-preview-05-2026";
 export const DEFAULT_MANAGED_AGENT_ID = "better-slido-editor";
@@ -281,8 +301,8 @@ function buildInteractionInput(
     "Steps:",
     `1. Read .agents/skills/${primarySkill}/SKILL.md and follow it.`,
     "2. Use code-resolver for the resolve → resolved tag workflow.",
-    "3. Edit /workspace/repo/src/App.tsx in the remote workspace.",
-    "4. End with a single JSON line: {\"modifiedFilePath\":\"src/App.tsx\",\"modifiedContent\":\"...\",\"explanation\":\"...\"}",
+    `3. Edit /workspace/repo/${directive.file} in the remote workspace.`,
+    `4. End with a single JSON line: {"modifiedFilePath":"${directive.file}","modifiedContent":"...","explanation":"..."}`,
   ].join("\n");
 }
 
@@ -293,11 +313,15 @@ export async function runManagedAgent(cwd: string): Promise<ManagedAgentResult> 
     `Scanning workspace for @agent directives...`,
   ];
 
-  const appPath = path.join(cwd, "src/App.tsx");
-  const directives = findAgentDirectives(appPath);
+  const filesToScan = scanDirectory(cwd, cwd);
+  let directives: AgentDirective[] = [];
+  for (const relFile of filesToScan) {
+    const absPath = path.join(cwd, relFile);
+    directives = [...directives, ...findAgentDirectives(absPath, relFile)];
+  }
 
   if (directives.length === 0) {
-    logs.push(`No active '@agent: resolve:' tags found in src/App.tsx.`);
+    logs.push(`No active '@agent: resolve:' tags found in the workspace.`);
     logs.push(`Tip: Add // @agent: resolve: your instruction and re-run.`);
     return {
       success: true,
@@ -310,11 +334,11 @@ export async function runManagedAgent(cwd: string): Promise<ManagedAgentResult> 
 
   const directive = directives[0];
   const primarySkill = pickSkillForDirective(directive.text);
-  logs.push(`[FOUND] Directive on line ${directive.line}: "${directive.text}"`);
+  logs.push(`[FOUND] Directive in ${directive.file} on line ${directive.line}: "${directive.text}"`);
   logs.push(`[SKILL] Routed to: ${primarySkill}`);
   logs.push(`Booting Antigravity managed agent (remote sandbox)...`);
 
-  const fileContent = fs.readFileSync(appPath, "utf-8");
+  const fileContent = fs.readFileSync(path.join(cwd, directive.file), "utf-8");
   const lines = fileContent.split("\n");
   const startLine = Math.max(0, directive.line - 15);
   const endLine = Math.min(lines.length, directive.line + 15);
