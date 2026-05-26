@@ -9,6 +9,7 @@ export const AGENT_SYNC_FIELDS: (keyof Slide)[] = [
   'bulletTextClass',
   'bullets',
   'pollOptions',
+  'commentary',
   'imageUrl',
   'footerLeft',
   'footerRight',

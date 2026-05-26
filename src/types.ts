@@ -34,6 +34,8 @@ export interface Slide {
   /** Optional Tailwind classes for subtitle (e.g. background highlight). */
   subtitleClass?: string;
   pollOptions?: PollOption[];
+  /** Optional presenter analysis aside (poll slides). */
+  commentary?: string;
   footerLeft: string;
   footerRight: string;
   imageUrl?: string;

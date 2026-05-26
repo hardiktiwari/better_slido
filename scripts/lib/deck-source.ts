@@ -12,6 +12,7 @@ export type SlideSourcePatch = Partial<{
   footerRight: string;
   bullets: Array<{ text: string; icon: string }>;
   pollOptions: Array<{ text: string; votes: number }>;
+  commentary: string;
 }>;
 
 function extractSlideBlock(content: string, slideId: string): string | undefined {
@@ -89,6 +90,8 @@ export function readSlideFieldsFromApp(cwd: string, slideId: string): SlideSourc
   if (footerLeft) out.footerLeft = parseQuotedString(footerLeft[1]);
   const footerRight = block.match(/footerRight:\s*'([^']*)'/);
   if (footerRight) out.footerRight = parseQuotedString(footerRight[1]);
+  const commentary = block.match(/commentary:\s*'([^']*)'/);
+  if (commentary) out.commentary = parseQuotedString(commentary[1]);
 
   const bullets = parseObjectArray(
     block,

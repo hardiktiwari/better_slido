@@ -562,7 +562,7 @@ export default function App() {
                       className="w-full bg-black/5 rounded px-2 py-1 font-serif italic text-sm text-[#57534e] focus:outline-none focus:bg-amber-100 resize-none"
                     />
                   ) : (
-                    <p className={`${themeStyle.subtitle} text-sm md:text-base lg:text-lg ${(displaySlide as Slide & { subtitleClass?: string }).subtitleClass ?? ''}`}>
+                    <p className={`${themeStyle.subtitle} text-sm md:text-base lg:text-lg ${displaySlide.subtitleClass ?? ''}`}>
                       {displaySlide.subtitle}
                     </p>
                   )}
@@ -650,8 +650,8 @@ export default function App() {
 
                 {/* 2. Poll slide */}
                 {activeSlide.type === 'poll' && activeSlide.pollOptions && (
-                  <div className={`w-full ${(displaySlide as Slide & { commentary?: string }).commentary ? 'flex gap-5 items-start' : ''}`}>
-                    <div className={`space-y-3 ${(displaySlide as Slide & { commentary?: string }).commentary ? 'flex-1 min-w-0' : 'w-full'}`}>
+                  <div className={`w-full ${displaySlide.commentary ? 'flex gap-5 items-start' : ''}`}>
+                    <div className={`space-y-3 ${displaySlide.commentary ? 'flex-1 min-w-0' : 'w-full'}`}>
                     {activeSlide.pollOptions.map((opt, optIdx) => {
                       const displayOpt = displaySlide.pollOptions?.[optIdx] ?? opt;
                       const votePct = totalPollVotes > 0 ? Math.round((opt.votes / totalPollVotes) * 100) : 0;
@@ -702,10 +702,10 @@ export default function App() {
                       </button>
                     )}
                     </div>
-                    {(displaySlide as Slide & { commentary?: string }).commentary && (
+                    {displaySlide.commentary && (
                       <aside className="w-[220px] flex-shrink-0 rounded-2xl border border-amber-800/20 bg-amber-500/10 p-4 space-y-2">
                         <p className="text-[10px] font-bold uppercase tracking-widest text-amber-900/80">Analysis</p>
-                        <p className="text-xs md:text-sm leading-relaxed opacity-90">{(displaySlide as Slide & { commentary?: string }).commentary}</p>
+                        <p className="text-xs md:text-sm leading-relaxed opacity-90">{displaySlide.commentary}</p>
                       </aside>
                     )}
                   </div>
@@ -1017,7 +1017,7 @@ export default function App() {
               <div className="space-y-3">
                 <span className={`${themeStyle.headerTag} text-sm tracking-widest`}>{activeSlide.tag}</span>
                 <h2 className={`${themeStyle.title} text-3xl md:text-5xl lg:text-6xl font-black`}>{activeSlide.title}</h2>
-                <p className={`${themeStyle.subtitle} text-base md:text-xl lg:text-2xl ${(activeSlide as Slide & { subtitleClass?: string }).subtitleClass ?? ''}`}>{activeSlide.subtitle}</p>
+                <p className={`${themeStyle.subtitle} text-base md:text-xl lg:text-2xl ${activeSlide.subtitleClass ?? ''}`}>{activeSlide.subtitle}</p>
                 {activeSlide.imageUrl && (
                   <img
                     src={activeSlide.imageUrl}
@@ -1045,8 +1045,8 @@ export default function App() {
                 )}
 
                 {activeSlide.type === 'poll' && activeSlide.pollOptions && (
-                  <div className={`w-full max-w-[1100px] mx-auto ${(activeSlide as Slide & { commentary?: string }).commentary ? 'flex gap-8 items-start' : 'max-w-[900px]'}`}>
-                    <div className={`space-y-4 ${(activeSlide as Slide & { commentary?: string }).commentary ? 'flex-1 min-w-0' : 'w-full'}`}>
+                  <div className={`w-full max-w-[1100px] mx-auto ${activeSlide.commentary ? 'flex gap-8 items-start' : 'max-w-[900px]'}`}>
+                    <div className={`space-y-4 ${activeSlide.commentary ? 'flex-1 min-w-0' : 'w-full'}`}>
                     {activeSlide.pollOptions.map((opt, optIdx) => {
                       const votePct = totalPollVotes > 0 ? Math.round((opt.votes / totalPollVotes) * 100) : 0;
                       return ( 
@@ -1065,10 +1065,10 @@ export default function App() {
                       );
                     })}
                     </div>
-                    {(activeSlide as Slide & { commentary?: string }).commentary && (
+                    {activeSlide.commentary && (
                       <aside className="w-[280px] flex-shrink-0 rounded-3xl border border-amber-800/20 bg-amber-500/10 p-5 space-y-2">
                         <p className="text-xs font-bold uppercase tracking-widest text-amber-900/80">Analysis</p>
-                        <p className="text-sm md:text-base leading-relaxed opacity-90">{(activeSlide as Slide & { commentary?: string }).commentary}</p>
+                        <p className="text-sm md:text-base leading-relaxed opacity-90">{activeSlide.commentary}</p>
                       </aside>
                     )}
                   </div>
