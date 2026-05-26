@@ -29,9 +29,16 @@ export interface Slide {
   title: string;
   subtitle: string;
   bullets?: BulletItem[];
+  /** Optional Tailwind classes for bullet body text (overrides theme bulletText). */
+  bulletTextClass?: string;
+  /** Optional Tailwind classes for subtitle (e.g. background highlight). */
+  subtitleClass?: string;
   pollOptions?: PollOption[];
+  /** Optional presenter analysis aside (poll slides). */
+  commentary?: string;
   footerLeft: string;
   footerRight: string;
+  imageUrl?: string;
 }
 
 // ---- Comment field anchors ----
@@ -82,6 +89,26 @@ export interface ProposedOp {
 
 // Maps a granular CommentField onto the broader targetElement the
 // server's /api/agent/resolve endpoint expects.
+/** Live deck snapshot sent with comment webhooks so the agent need not scan all of App.tsx. */
+export interface CommentWebhookContext {
+  slideIndex: number;
+  field: CommentField;
+  targetElement: ReturnType<typeof toTargetElement>;
+  slide: {
+    id: string;
+    type: SlideType;
+    tag: string;
+    title: string;
+    subtitle: string;
+    bullets?: BulletItem[];
+    pollOptions?: PollOption[];
+    footerLeft: string;
+    footerRight: string;
+    bulletTextClass?: string;
+    imageUrl?: string;
+  };
+}
+
 export function toTargetElement(
   field: CommentField,
 ): 'title' | 'subtitle' | 'tag' | 'bullets' | 'poll' | 'footer' | 'general' {
@@ -94,7 +121,7 @@ export function toTargetElement(
 }
 
 // ---- Agent session lifecycle ----
-export type AgentStatus = 'idle' | 'thinking' | 'streaming' | 'applied' | 'error';
+export type AgentStatus = 'idle' | 'queued' | 'thinking' | 'streaming' | 'applied' | 'error';
 
 export interface AgentSession {
   status: AgentStatus;
@@ -102,6 +129,18 @@ export interface AgentSession {
   streamingText: string;
   /** Ops the agent proposed; populated when status reaches 'review' */
   proposedOps: ProposedOp[];
+  /** Comments applied on last successful run (for status bar copy) */
+  appliedChangeCount?: number;
+  /** Orchestrator-routed subagent (e.g. text-changes, visual-design) */
+  subagent?: string;
+  primarySkill?: string;
+  rationale?: string;
+  routedBy?: string;
+  toolsCalled?: string[];
+  /** Orchestrator / CLI log lines */
+  activityLines?: string[];
+  /** Streamed thinking text from Cursor CLI */
+  reasoning?: string;
   /** Comment that fired this session (if any) */
   triggerCommentId?: string;
   errorMessage?: string;

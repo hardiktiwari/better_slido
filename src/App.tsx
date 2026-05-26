@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Sparkles,
   Target,
@@ -18,6 +18,7 @@ import {
   Layers,
   Palette,
   MessageSquare,
+  Bot,
 } from 'lucide-react';
 import type {
   Slide,
@@ -27,12 +28,16 @@ import type {
   QAQuestion,
   SlideComment,
   CommentField,
-  ProposedOp,
-  AgentSession,
 } from './types';
-import { AGENT_SESSION_IDLE, toTargetElement } from './types';
 import { CommentAnchor } from './components/InlineComment';
 import { AgentStatusBar } from './components/AgentStatusBar';
+import { useAgentReview } from './hooks/useAgentReview';
+import { fetchSlideSourceFields } from './lib/agent-api';
+import {
+  applyPatchesToDeck,
+  fetchAllSlideSourcePatches,
+  mergeSlidesFromDefaults,
+} from './lib/deck-sync';
 
 // ---- Icons helper ----
 
@@ -52,40 +57,57 @@ const ALL_ICONS = ['sparkles', 'target', 'check', 'book', 'star', 'lightbulb'] a
 
 // ---- Default deck & questions ----
 
+const COMMENTS_STORAGE_KEY = 'better_slido_comments_v4';
+
 const DEFAULT_DECK: Slide[] = [
   {
+    // @agent: resolve: @agent test
     id: 'slide-1',
     type: 'title',
     tag: 'CONFERENCE 2026',
     title: 'The Future of Learning',
     subtitle: 'How artificial intelligence and real-time audience synergy are reshaping the modern classroom.',
+    subtitleClass: 'bg-green-500 px-2 py-1 rounded',
     footerLeft: 'EduAI Forum 2026',
     footerRight: 'Join at Slido.com #EduAI',
   },
   {
+    // @agent: resolved: [target:bullets] @agent please add 2 more bullets
+    // @agent: resolve: @agent Change tag to POST-RESTART TEST
+    // @agent: resolved: @agent Set tag text to QUEUE FIX OK
+    // @agent: resolved: [target:bullets] @agent Please add 2 more biulleets
+    // @agent: resolved: [target:bullets] @agent Make thsi black again
+    // @agent: resolved: @agent Set tag to DEDUPE TEST
+    // @agent: resolved: @agent Remvoe the image from slide and change it to 4 bulllets points
     id: 'slide-2',
     type: 'bullet',
-    tag: 'AI in Education',
+    tag: 'DEDUPE TEST',
     title: 'AI for Education',
     subtitle: 'Personalizing learning at scale',
+    bulletTextClass: 'slide-bullet-black',
     bullets: [
-      { text: 'Adaptive tutoring that meets each learner where they are.', icon: 'target' },
-      { text: 'Automated feedback and grading to free teachers for mentorship.', icon: 'check' },
-      { text: 'Accessible content generation for diverse learning needs.', icon: 'book' },
+      { text: 'Adaptive learning paths that adjust to each student\'s pace and style.', icon: 'target' },
+      { text: 'Automated feedback on assignments to free up teacher time.', icon: 'check' },
+      { text: 'Accessible content formats for diverse learning needs.', icon: 'book' },
+      { text: 'Early insights that help teachers support students before they fall behind.', icon: 'lightbulb' },
     ],
     footerLeft: 'EduAI Forum',
     footerRight: 'Responsible AI: human oversight, privacy, and equity first',
   },
   {
+    // @agent: resolved: [target:poll] @agent Make this 5 pointes
+    // @agent: resolved: @agent Add a side commentary box on this slide for anaysis
     id: 'slide-3',
     type: 'poll',
     tag: 'AUDIENCE POLL',
     title: 'How do you plan to use AI in your courses next semester?',
     subtitle: 'Live-updating results from your audience appear here in real time.',
+    commentary: 'Analysis: Personalized tutoring leads at 32%. Assessment tools and live simulations trail closely — faculty want both efficiency and classroom engagement.',
     pollOptions: [
       { text: 'Personalized tutoring & student support bots', votes: 14 },
       { text: 'Automated assessment & lesson planning content', votes: 9 },
       { text: 'Interactive curriculum & live slide simulations', votes: 12 },
+      { text: 'Research assistance & academic integrity tools', votes: 6 },
       { text: 'No immediate plans for AI integration', votes: 3 },
     ],
     footerLeft: 'EduAI Forum',
@@ -129,78 +151,22 @@ const DEFAULT_QUESTIONS: QAQuestion[] = [
   },
 ];
 
-// ---- Op helpers ----
-// Server returns Hardik's op schema: { type, field?, value?, index?, text?, icon? }
-
-function applyOpToSlide(slide: Slide, op: ProposedOp): Slide {
-  let updated: Slide = { ...slide };
-
-  if (op.type === 'update_field' && op.field && op.value !== undefined) {
-    return { ...updated, [op.field]: op.value };
-  }
-
-  if (op.type === 'update_bullet' && updated.bullets && op.index !== undefined) {
-    const bullets = [...updated.bullets];
-    if (bullets[op.index]) {
-      bullets[op.index] = {
-        ...bullets[op.index],
-        ...(op.text !== undefined && { text: op.text }),
-        ...(op.icon !== undefined && { icon: op.icon }),
-      };
-    }
-    return { ...updated, bullets };
-  }
-
-  if (op.type === 'add_bullet') {
-    const bullets = [...(updated.bullets ?? [])];
-    bullets.push({ text: op.text ?? 'New point', icon: op.icon ?? 'sparkles' });
-    return { ...updated, bullets };
-  }
-
-  if (op.type === 'remove_bullet' && updated.bullets && op.index !== undefined) {
-    return { ...updated, bullets: updated.bullets.filter((_, i) => i !== op.index) };
-  }
-
-  if (op.type === 'update_poll' && updated.pollOptions && op.index !== undefined) {
-    const pollOptions = [...updated.pollOptions];
-    if (pollOptions[op.index] && op.text !== undefined) {
-      pollOptions[op.index] = { ...pollOptions[op.index], text: op.text };
-    }
-    return { ...updated, pollOptions };
-  }
-
-  if (op.type === 'add_poll') {
-    const pollOptions = [...(updated.pollOptions ?? [])];
-    pollOptions.push({ text: op.text ?? 'New option', votes: 0 });
-    return { ...updated, pollOptions };
-  }
-
-  if (op.type === 'remove_poll' && updated.pollOptions && op.index !== undefined) {
-    return { ...updated, pollOptions: updated.pollOptions.filter((_, i) => i !== op.index) };
-  }
-
-  return updated;
-}
-
-// Applies a list of ops to a specific slide in the deck, by id.
-function applyOpsToDeck(
-  deckToUpdate: Slide[],
-  slideId: string,
-  ops: ProposedOp[],
-): Slide[] {
-  return deckToUpdate.map((slide) =>
-    slide.id !== slideId ? slide : ops.reduce(applyOpToSlide, slide),
-  );
-}
-
 // ---- App ----
 
 export default function App() {
+  const defaultDeckRef = useRef(DEFAULT_DECK);
+  defaultDeckRef.current = DEFAULT_DECK;
+
+  const mergeFromDefaults = useCallback(
+    (slides: Slide[]) => mergeSlidesFromDefaults(slides, defaultDeckRef.current),
+    [],
+  );
 
   // ---- Core presentation state ----
   const [deck, setDeck] = useState<Slide[]>(() => {
     const saved = localStorage.getItem('better_slido_deck');
-    return saved ? JSON.parse(saved) : DEFAULT_DECK;
+    const base: Slide[] = saved ? JSON.parse(saved) : DEFAULT_DECK;
+    return mergeSlidesFromDefaults(base, DEFAULT_DECK);
   });
 
   const [questions, setQuestions] = useState<QAQuestion[]>(() => {
@@ -215,11 +181,20 @@ export default function App() {
 
   // ---- Comments & agent state ----
   const [comments, setComments] = useState<SlideComment[]>(() => {
-    const saved = localStorage.getItem('better_slido_comments');
+    localStorage.removeItem('better_slido_comments');
+    localStorage.removeItem('better_slido_comments_v2');
+    localStorage.removeItem('better_slido_comments_v3');
+    const saved = localStorage.getItem(COMMENTS_STORAGE_KEY);
     return saved ? JSON.parse(saved) : [];
   });
-  const [agentSession, setAgentSession] = useState<AgentSession>(AGENT_SESSION_IDLE);
-  const sseAbortRef = useRef<AbortController | null>(null);
+  const { agentSession, applySlideReview, cancelAgent, agentBusy } = useAgentReview({
+    deck,
+    currentSlideIndex,
+    comments,
+    setComments,
+    setDeck,
+    mergeSlidesFromDefaults: mergeFromDefaults,
+  });
 
   // ---- Derived state ----
 
@@ -227,10 +202,31 @@ export default function App() {
   const activeSlide = deck[currentSlideIndex] ?? deck[0];
   const displaySlide = activeSlide;
 
+  // On load: pull agent-edited fields from src/App.tsx (disk beats stale localStorage).
+  useEffect(() => {
+    void (async () => {
+      const ids = defaultDeckRef.current.map((s) => s.id);
+      const patches = await fetchAllSlideSourcePatches(ids, fetchSlideSourceFields);
+      if (patches.size === 0) return;
+      setDeck((prev) => applyPatchesToDeck(prev, patches));
+    })();
+  }, []);
+
+  // When Vite HMR reloads App.tsx after the agent edits DEFAULT_DECK, refresh deck state.
+  useEffect(() => {
+    if (!import.meta.hot) return;
+    const resync = () => {
+      setDeck((prev) => mergeSlidesFromDefaults(prev, defaultDeckRef.current));
+    };
+    import.meta.hot.accept(resync);
+  }, []);
+
   // ---- Persistence ----
   useEffect(() => { localStorage.setItem('better_slido_deck', JSON.stringify(deck)); }, [deck]);
   useEffect(() => { localStorage.setItem('better_slido_questions', JSON.stringify(questions)); }, [questions]);
-  useEffect(() => { localStorage.setItem('better_slido_comments', JSON.stringify(comments)); }, [comments]);
+  useEffect(() => {
+    localStorage.setItem(COMMENTS_STORAGE_KEY, JSON.stringify(comments));
+  }, [comments]);
 
   // ---- Keyboard navigation ----
   useEffect(() => {
@@ -247,13 +243,6 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [deck.length, isPreviewMode, isEditing]);
-
-  // Auto-dismiss 'applied' status after 3 s
-  useEffect(() => {
-    if (agentSession.status !== 'applied') return;
-    const t = setTimeout(() => setAgentSession(AGENT_SESSION_IDLE), 3000);
-    return () => clearTimeout(t);
-  }, [agentSession.status]);
 
   // ---- Slide edit handlers ----
 
@@ -311,10 +300,13 @@ export default function App() {
       setQuestions(DEFAULT_QUESTIONS);
       setComments([]);
       setCurrentSlideIndex(1);
-      setAgentSession(AGENT_SESSION_IDLE);
+      cancelAgent();
       localStorage.removeItem('better_slido_deck');
       localStorage.removeItem('better_slido_questions');
+      localStorage.removeItem(COMMENTS_STORAGE_KEY);
       localStorage.removeItem('better_slido_comments');
+      localStorage.removeItem('better_slido_comments_v2');
+      localStorage.removeItem('better_slido_comments_v3');
     }
   };
 
@@ -370,64 +362,6 @@ export default function App() {
 
   const handleResolveComment = (id: string) => {
     setComments((prev) => prev.map((c) => c.id === id ? { ...c, resolved: true } : c));
-  };
-
-  // ---- Agent handlers ----
-  // POSTs to Hardik's /api/agent/resolve endpoint (one-shot JSON, schema-validated by Gemini).
-  // Autonomous: ops are applied immediately, no review step.
-
-  const triggerAgent = async (slideId: string, field: CommentField, commentText: string) => {
-    sseAbortRef.current?.abort();
-    const abort = new AbortController();
-    sseAbortRef.current = abort;
-
-    const targetSlide = deck.find((s) => s.id === slideId) ?? deck[currentSlideIndex];
-    setAgentSession({ status: 'thinking', streamingText: '', proposedOps: [] });
-
-    try {
-      const res = await fetch('/api/agent/resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          slide: targetSlide,
-          comment: commentText,
-          targetElement: toTargetElement(field),
-        }),
-        signal: abort.signal,
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        setAgentSession((p) => ({ ...p, status: 'error', errorMessage: `Server ${res.status}: ${text}` }));
-        return;
-      }
-
-      const data = (await res.json()) as { proposedOps?: ProposedOp[]; explanation?: string; error?: string };
-
-      if (data.error) {
-        setAgentSession((p) => ({ ...p, status: 'error', errorMessage: data.error! }));
-        return;
-      }
-
-      const ops = data.proposedOps ?? [];
-      if (ops.length > 0) {
-        setDeck((prev) => applyOpsToDeck(prev, slideId, ops));
-      }
-      setAgentSession({
-        status: 'applied',
-        streamingText: data.explanation ?? '',
-        proposedOps: ops,
-      });
-    } catch (err: unknown) {
-      if (err instanceof Error && err.name === 'AbortError') return;
-      const msg = err instanceof Error ? err.message : String(err);
-      setAgentSession((p) => ({ ...p, status: 'error', errorMessage: msg }));
-    }
-  };
-
-  const handleCancelAgent = () => {
-    sseAbortRef.current?.abort();
-    setAgentSession(AGENT_SESSION_IDLE);
   };
 
   // Helper: get comments for a specific slide field
@@ -503,7 +437,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#f3f2ee] flex flex-col font-sans selection:bg-[#d97706]/20">
 
-      {/* ── Header ── */}
+      {/* ─── Header ─── */}
       <header className="bg-white border-b border-[#e5e2da] px-6 py-4 flex items-center justify-between shadow-sm sticky top-0 z-40">
         <div className="flex items-center gap-3">
           <div className="bg-[#1c1917] text-white p-2 rounded-lg">
@@ -563,17 +497,17 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Main workspace ── */}
+      {/* ─── Main workspace ─── */}
       <div className="flex-1 max-w-[1700px] w-full mx-auto px-6 py-6 grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
 
-        {/* ── Presentation Board (full width) ── */}
+        {/* ─── Presentation Board (full width) ─── */}
         <div className="lg:col-span-12 max-w-[1100px] mx-auto w-full flex flex-col gap-6">
 
           {/* Slide canvas */}
           <div className="relative w-full aspect-[16/9] bg-white rounded-3xl shadow-xl overflow-hidden border border-[#e5e2da] group">
             <div className={`w-full h-full p-[5%] flex flex-col justify-between relative overflow-hidden transition-all duration-300 ${themeStyle.wrapper}`}>
 
-              {/* ── Slide header: tag, title, subtitle ── */}
+              {/* ─── Slide header: tag, title, subtitle ─── */}
               <div className="space-y-2">
 
                 {/* Tag */}
@@ -581,7 +515,6 @@ export default function App() {
                   slideId={activeSlide.id} field="tag"
                   comments={getFieldComments(activeSlide.id, 'tag')}
                   onAddComment={handleAddComment} onResolveComment={handleResolveComment}
-                  onTriggerAgent={triggerAgent}
                 >
                   {isEditing ? (
                     <input
@@ -600,7 +533,6 @@ export default function App() {
                   slideId={activeSlide.id} field="title"
                   comments={getFieldComments(activeSlide.id, 'title')}
                   onAddComment={handleAddComment} onResolveComment={handleResolveComment}
-                  onTriggerAgent={triggerAgent}
                 >
                   {isEditing ? (
                     <textarea
@@ -621,7 +553,6 @@ export default function App() {
                   slideId={activeSlide.id} field="subtitle"
                   comments={getFieldComments(activeSlide.id, 'subtitle')}
                   onAddComment={handleAddComment} onResolveComment={handleResolveComment}
-                  onTriggerAgent={triggerAgent}
                 >
                   {isEditing ? (
                     <textarea
@@ -631,14 +562,23 @@ export default function App() {
                       className="w-full bg-black/5 rounded px-2 py-1 font-serif italic text-sm text-[#57534e] focus:outline-none focus:bg-amber-100 resize-none"
                     />
                   ) : (
-                    <p className={`${themeStyle.subtitle} text-sm md:text-base lg:text-lg`}>
+                    <p className={`${themeStyle.subtitle} text-sm md:text-base lg:text-lg ${displaySlide.subtitleClass ?? ''}`}>
                       {displaySlide.subtitle}
                     </p>
                   )}
                 </CommentAnchor>
+
+                {activeSlide.imageUrl && (
+                  <img
+                    src={activeSlide.imageUrl}
+                    alt={activeSlide.title}
+                    referrerPolicy="no-referrer"
+                    className="w-full max-w-md mx-auto rounded-3xl object-cover shadow-lg border border-stone-800/40"
+                  />
+                )}
               </div>
 
-              {/* ── Slide body ── */}
+              {/* ─── Slide body ─── */}
               <div className="flex-1 flex items-center my-4 overflow-y-auto max-h-[50%]">
 
                 {/* 1. Bullet slide */}
@@ -673,7 +613,6 @@ export default function App() {
                             field={`bullet-${bIdx}` as CommentField}
                             comments={getFieldComments(activeSlide.id, `bullet-${bIdx}` as CommentField)}
                             onAddComment={handleAddComment} onResolveComment={handleResolveComment}
-                            onTriggerAgent={triggerAgent}
                           >
                             {isEditing ? (
                               <div className="flex items-center gap-2 w-full">
@@ -681,14 +620,14 @@ export default function App() {
                                   type="text"
                                   value={b.text}
                                   onChange={(e) => handleUpdateBullet(bIdx, e.target.value)}
-                                  className="flex-1 bg-black/5 rounded px-2 py-0.5 text-sm font-sans text-stone-900 focus:outline-none focus:bg-amber-100"
+                                  className="flex-grow bg-black/5 rounded px-2 py-0.5 text-sm font-sans text-stone-900 focus:outline-none focus:bg-amber-100"
                                 />
                                 <button onClick={() => handleRemoveBulletPoint(bIdx)} className="text-red-500 hover:text-red-700 p-1">
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             ) : (
-                              <p className={`${themeStyle.bulletText} text-xs md:text-sm lg:text-base`}>
+                              <p className={`${activeSlide.bulletTextClass ?? themeStyle.bulletText} text-xs md:text-sm lg:text-base`}>
                                 {displaySlide.bullets?.[bIdx]?.text ?? b.text}
                               </p>
                             )}
@@ -711,7 +650,8 @@ export default function App() {
 
                 {/* 2. Poll slide */}
                 {activeSlide.type === 'poll' && activeSlide.pollOptions && (
-                  <div className="w-full space-y-3">
+                  <div className={`w-full ${displaySlide.commentary ? 'flex gap-5 items-start' : ''}`}>
+                    <div className={`space-y-3 ${displaySlide.commentary ? 'flex-1 min-w-0' : 'w-full'}`}>
                     {activeSlide.pollOptions.map((opt, optIdx) => {
                       const displayOpt = displaySlide.pollOptions?.[optIdx] ?? opt;
                       const votePct = totalPollVotes > 0 ? Math.round((opt.votes / totalPollVotes) * 100) : 0;
@@ -723,7 +663,6 @@ export default function App() {
                               field={`poll-${optIdx}` as CommentField}
                               comments={getFieldComments(activeSlide.id, `poll-${optIdx}` as CommentField)}
                               onAddComment={handleAddComment} onResolveComment={handleResolveComment}
-                              onTriggerAgent={triggerAgent}
                             >
                               {isEditing ? (
                                 <div className="flex items-center gap-2 flex-1 mr-4">
@@ -761,6 +700,13 @@ export default function App() {
                         <Plus className="w-3.5 h-3.5" />
                         Add Poll Option
                       </button>
+                    )}
+                    </div>
+                    {displaySlide.commentary && (
+                      <aside className="w-[220px] flex-shrink-0 rounded-2xl border border-amber-800/20 bg-amber-500/10 p-4 space-y-2">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-amber-900/80">Analysis</p>
+                        <p className="text-xs md:text-sm leading-relaxed opacity-90">{displaySlide.commentary}</p>
+                      </aside>
                     )}
                   </div>
                 )}
@@ -806,13 +752,12 @@ export default function App() {
                 )}
               </div>
 
-              {/* ── Footer ── */}
+              {/* ─── Footer ─── */}
               <div className={`pt-3 flex justify-between items-center text-[10px] md:text-xs ${themeStyle.footer}`}>
                 <CommentAnchor
                   slideId={activeSlide.id} field="footerLeft"
                   comments={getFieldComments(activeSlide.id, 'footerLeft')}
                   onAddComment={handleAddComment} onResolveComment={handleResolveComment}
-                  onTriggerAgent={triggerAgent}
                 >
                   {isEditing ? (
                     <input
@@ -833,7 +778,6 @@ export default function App() {
                   slideId={activeSlide.id} field="footerRight"
                   comments={getFieldComments(activeSlide.id, 'footerRight')}
                   onAddComment={handleAddComment} onResolveComment={handleResolveComment}
-                  onTriggerAgent={triggerAgent}
                 >
                   {isEditing ? (
                     <input
@@ -856,7 +800,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* ── Slide-level tag strip ── */}
+          {/* ─── Slide-level tag strip ─── */}
           <div className="flex items-center justify-between px-1">
             <span className="text-[11px] text-stone-400 font-medium">
               Hover any field to comment on it, or tag the whole slide:
@@ -865,9 +809,8 @@ export default function App() {
               slideId={activeSlide.id}
               field="slide"
               comments={getFieldComments(activeSlide.id, 'slide')}
-              onAddComment={handleAddComment}
-              onResolveComment={handleResolveComment}
-              onTriggerAgent={triggerAgent}
+                            onAddComment={handleAddComment}
+                            onResolveComment={handleResolveComment}
               trigger="children"
             >
               <button className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border transition ${
@@ -878,7 +821,7 @@ export default function App() {
                 <MessageSquare className="w-3.5 h-3.5" />
                 Tag entire slide
                 {getFieldComments(activeSlide.id, 'slide').filter(c => !c.resolved).length > 0 && (
-                  <span className="bg-amber-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center">
+                  <span className="bg-amber-500 text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center shadow">
                     {getFieldComments(activeSlide.id, 'slide').filter(c => !c.resolved).length}
                   </span>
                 )}
@@ -886,10 +829,27 @@ export default function App() {
             </CommentAnchor>
           </div>
 
-          {/* ── Agent status bar ── */}
-          <AgentStatusBar session={agentSession} onCancel={handleCancelAgent} />
+          {/* ─── Review handoff + agent status ─── */}
+          {slideCommentCount(activeSlide.id) > 0 && (
+            <div className="flex items-center justify-between gap-3 px-1">
+              <p className="text-[11px] text-stone-500">
+                {slideCommentCount(activeSlide.id)} unresolved comment
+                {slideCommentCount(activeSlide.id) !== 1 ? 's' : ''} on this slide — click when ready.
+              </p>
+              <button
+                type="button"
+                onClick={() => applySlideReview(activeSlide.id)}
+                disabled={agentBusy}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 disabled:cursor-not-allowed transition"
+              >
+                <Bot className="w-3.5 h-3.5" />
+                Done reviewing — apply with agent
+              </button>
+            </div>
+          )}
+          <AgentStatusBar session={agentSession} onCancel={cancelAgent} />
 
-          {/* ── Deck navigation & manager ── */}
+          {/* ─── Deck navigation & manager ─── */}
           <div className="bg-white rounded-2xl border border-[#e5e2da] p-5 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-[#1c1917] flex items-center gap-1.5">
@@ -925,7 +885,7 @@ export default function App() {
             <div className="flex gap-3 overflow-x-auto pb-2 pt-1">
               {deck.map((slide, idx) => {
                 const commentCount = slideCommentCount(slide.id);
-                return (
+                return ( 
                   <button
                     key={slide.id}
                     onClick={() => setCurrentSlideIndex(idx)}
@@ -977,7 +937,7 @@ export default function App() {
             </div>
           </div>
 
-          {/* ── Q&A presenter control deck ── */}
+          {/* ─── Q&A presenter control deck ─── */}
           {activeSlide.type === 'qa' && (
             <div className="bg-white rounded-2xl border border-[#e5e2da] p-5 shadow-sm space-y-4">
               <div className="flex justify-between items-center border-b border-gray-100 pb-3">
@@ -989,7 +949,7 @@ export default function App() {
               <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                 {questions.length === 0 ? (
                   <p className="text-xs text-gray-400 italic py-4 text-center">No audience questions submitted yet.</p>
-                ) : (
+                ) : ( 
                   questions
                     .sort((a, b) => b.upvotes - a.upvotes)
                     .map((q) => (
@@ -1037,7 +997,7 @@ export default function App() {
         </div>
       </div>
 
-      {/* ── Present (fullscreen) mode ── */}
+      {/* ─── Present (fullscreen) mode ─── */}
       {isPreviewMode && (
         <div className="fixed inset-0 bg-[#0c0a09] z-50 flex items-center justify-center p-[4%]">
           <div className="absolute top-6 right-6 z-50 flex gap-3">
@@ -1057,7 +1017,15 @@ export default function App() {
               <div className="space-y-3">
                 <span className={`${themeStyle.headerTag} text-sm tracking-widest`}>{activeSlide.tag}</span>
                 <h2 className={`${themeStyle.title} text-3xl md:text-5xl lg:text-6xl font-black`}>{activeSlide.title}</h2>
-                <p className={`${themeStyle.subtitle} text-base md:text-xl lg:text-2xl`}>{activeSlide.subtitle}</p>
+                <p className={`${themeStyle.subtitle} text-base md:text-xl lg:text-2xl ${activeSlide.subtitleClass ?? ''}`}>{activeSlide.subtitle}</p>
+                {activeSlide.imageUrl && (
+                  <img
+                    src={activeSlide.imageUrl}
+                    alt={activeSlide.title}
+                    referrerPolicy="no-referrer"
+                    className="w-full max-w-xs md:max-w-md rounded-2xl object-cover shadow-xl border border-white/10"
+                  />
+                )}
               </div>
 
               <div className="flex-1 flex items-center my-6 overflow-y-auto max-h-[60%]">
@@ -1069,7 +1037,7 @@ export default function App() {
                           <BulletIcon name={b.icon} className="w-6 h-6 md:w-7 md:h-7" />
                         </div>
                         <div className="flex-grow pt-1">
-                          <p className={`${themeStyle.bulletText} text-sm md:text-lg lg:text-2xl`}>{b.text}</p>
+                          <p className={`${activeSlide.bulletTextClass ?? themeStyle.bulletText} text-sm md:text-lg lg:text-2xl`}>{b.text}</p>
                         </div>
                       </li>
                     ))}
@@ -1077,10 +1045,11 @@ export default function App() {
                 )}
 
                 {activeSlide.type === 'poll' && activeSlide.pollOptions && (
-                  <div className="w-full space-y-4 max-w-[900px] mx-auto">
+                  <div className={`w-full max-w-[1100px] mx-auto ${activeSlide.commentary ? 'flex gap-8 items-start' : 'max-w-[900px]'}`}>
+                    <div className={`space-y-4 ${activeSlide.commentary ? 'flex-1 min-w-0' : 'w-full'}`}>
                     {activeSlide.pollOptions.map((opt, optIdx) => {
                       const votePct = totalPollVotes > 0 ? Math.round((opt.votes / totalPollVotes) * 100) : 0;
-                      return (
+                      return ( 
                         <div key={optIdx} className="w-full space-y-1.5 animate-slide-up">
                           <div className="flex justify-between items-center text-xs md:text-lg font-bold">
                             <span className="opacity-90">{opt.text}</span>
@@ -1095,10 +1064,17 @@ export default function App() {
                         </div>
                       );
                     })}
+                    </div>
+                    {activeSlide.commentary && (
+                      <aside className="w-[280px] flex-shrink-0 rounded-3xl border border-amber-800/20 bg-amber-500/10 p-5 space-y-2">
+                        <p className="text-xs font-bold uppercase tracking-widest text-amber-900/80">Analysis</p>
+                        <p className="text-sm md:text-base leading-relaxed opacity-90">{activeSlide.commentary}</p>
+                      </aside>
+                    )}
                   </div>
                 )}
 
-                {activeSlide.type === 'title' && (
+                {activeSlide.type === 'title' && ( 
                   <div className="w-full text-center space-y-6 py-12">
                     <div className="w-24 h-1.5 bg-[#d97706] mx-auto rounded-full" />
                     <p className="text-stone-500 text-sm md:text-lg tracking-widest font-mono font-bold uppercase">
@@ -1110,16 +1086,16 @@ export default function App() {
 
                 {activeSlide.type === 'qa' && (
                   <div className="w-full space-y-4 max-w-[900px] mx-auto">
-                    {questions.filter((q) => !q.isAnswered).length === 0 ? (
+                    {questions.filter((q) => !q.isAnswered).length === 0 ? ( 
                       <div className="text-center py-12 text-gray-400 text-lg italic">
                         Go ahead, ask us anything! Submit your questions live.
                       </div>
-                    ) : (
+                    ) : ( 
                       questions
                         .filter((q) => !q.isAnswered)
                         .sort((a, b) => b.upvotes - a.upvotes)
                         .slice(0, 3)
-                        .map((q) => (
+                        .map((q) => ( 
                           <div key={q.id} className={`p-4 md:p-5 rounded-3xl flex items-center justify-between gap-6 shadow-md animate-slide-up ${themeStyle.qaCard}`}>
                             <div className="space-y-1.5">
                               <p className="text-sm md:text-lg lg:text-xl font-bold leading-snug">{q.text}</p>

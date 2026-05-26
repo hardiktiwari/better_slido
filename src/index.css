@@ -108,3 +108,14 @@
 .animate-fade-in {
   animation: fadeIn 0.3s ease-out;
 }
+
+/* Agent / deck bullet colors (static classes — Tailwind won't see dynamic deck strings) */
+.slide-bullet-red {
+  color: #dc2626 !important;
+}
+.slide-bullet-blue {
+  color: #2563eb !important;
+}
+.slide-bullet-green {
+  color: #16a34a !important;
+}

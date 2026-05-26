@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { MessageSquare, Send, CheckCircle, X, Bot } from 'lucide-react';
+import { MessageSquare, CheckCircle, X, Bot } from 'lucide-react';
 import type { SlideComment, CommentField } from '../types';
 
 interface CommentAnchorProps {
@@ -9,7 +9,6 @@ interface CommentAnchorProps {
   comments: SlideComment[];
   onAddComment: (comment: Omit<SlideComment, 'id' | 'createdAt'>) => void;
   onResolveComment: (id: string) => void;
-  onTriggerAgent: (slideId: string, field: CommentField, commentText: string) => void;
   authorName?: string;
   /**
    * 'badge' (default): show the small corner badge that opens the popover.
@@ -29,7 +28,6 @@ export function CommentAnchor({
   comments,
   onAddComment,
   onResolveComment,
-  onTriggerAgent,
   authorName = 'Presenter',
   trigger = 'badge',
   children,
@@ -92,10 +90,6 @@ export function CommentAnchor({
     );
 
     onAddComment({ slideId, field, author: authorName, body: text, resolved: false, mentions });
-
-    if (mentionsAgent) {
-      onTriggerAgent(slideId, field, text);
-    }
 
     setDraft('');
     setOpen(false);
@@ -179,38 +173,30 @@ export function CommentAnchor({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitComment(e);
                 }}
-                placeholder={`Comment on "${fieldLabel}"… type @agent to tag`}
-                className="w-full text-xs border border-stone-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:border-amber-400 placeholder-stone-300"
+                placeholder={
+                  mentionsAgent
+                    ? `Comment on "${fieldLabel}"… @agent runs when you post`
+                    : `Comment on "${fieldLabel}"… or use Done reviewing to run @agent`
+                }
+                className="w-full text-xs border border-stone-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:border-violet-400 placeholder-stone-300"
               />
               <div className="flex items-center justify-between">
-                {mentionsAgent ? (
-                  <span className="flex items-center gap-1 text-[10px] text-violet-600 font-semibold">
-                    <Bot className="w-3 h-3" />
-                    Agent will be notified
-                  </span>
-                ) : (
-                  <span />
-                )}
+                <span className="flex items-center gap-1 text-[10px] text-stone-500 font-medium">
+                  {mentionsAgent ? (
+                    <>
+                      <Bot className="w-3 h-3 text-violet-600" />
+                      @agent noted
+                    </>
+                  ) : (
+                    '⌘↵ to post'
+                  )}
+                </span>
                 <button
                   type="submit"
                   disabled={!draft.trim()}
-                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition disabled:opacity-40 ${
-                    mentionsAgent
-                      ? 'bg-violet-600 hover:bg-violet-700 text-white'
-                      : 'bg-amber-600 hover:bg-amber-700 text-white'
-                  }`}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold transition disabled:opacity-40 bg-stone-800 hover:bg-stone-900 text-white"
                 >
-                  {mentionsAgent ? (
-                    <>
-                      <Bot className="w-3 h-3" />
-                      Tag Agent
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-3 h-3" />
-                      Comment
-                    </>
-                  )}
+                  Add comment
                 </button>
               </div>
             </form>
