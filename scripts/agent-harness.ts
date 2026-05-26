@@ -1,16 +1,34 @@
 import dotenv from "dotenv";
-import { runManagedAgent, HARNESS_VERSION } from "./lib/managed-agent.js";
+import { runCursorAgent, CURSOR_HARNESS_VERSION } from "./lib/cursor-agent.js";
+import { processImageGenerations } from "./lib/image-generator.js";
 
 dotenv.config();
 
 async function runCLI() {
-  console.log(`\n=== Better Slido - Managed Agent CLI [v${HARNESS_VERSION}] ===\n`);
+  console.log(`\n=== Better Slido - Cursor CLI Harness [v${CURSOR_HARNESS_VERSION}] ===\n`);
 
   try {
-    const result = await runManagedAgent(process.cwd());
+    const result = await runCursorAgent(process.cwd());
 
     for (const line of result.logs) {
       console.log(line);
+    }
+
+    // Intercept any `imageGenerations` requests the agent attached to its
+    // JSON output and run them locally through Imagen-3. Files land in
+    // public/generated/ and are served by the /generated static route.
+    if (result.imageGenerations && result.imageGenerations.length > 0) {
+      console.log(`\n=== Image Generation (Imagen-3) ===`);
+      const imageRun = await processImageGenerations(process.cwd(), result.imageGenerations);
+      for (const line of imageRun.logs) {
+        console.log(line);
+      }
+      if (imageRun.results.length > 0) {
+        console.log(`\n✓ Generated ${imageRun.results.length} image(s):`);
+        for (const r of imageRun.results) {
+          console.log(`  - ${r.path} (${r.bytes} bytes)`);
+        }
+      }
     }
 
     if (result.applied) {

@@ -1,6 +1,6 @@
 # Better Slido — Agent behavioral constraints
 
-Design specifications and operating rules for the Antigravity managed agent harness.
+Design specifications and operating rules for the Cursor CLI agent harness.
 
 ## Role
 
@@ -17,18 +17,8 @@ You are the in-repo presentation co-worker for **Better Slido**: a browser-based
    - `code-resolver` — `@agent` directives
    - `slide-editor` — deck / poll / Q&A structure
 
-## Harness output contract
-
-After editing in the remote sandbox, end with one JSON line (no markdown fences):
-
-```json
-{"modifiedFilePath":"src/App.tsx","modifiedContent":"<full file>","explanation":"<summary>"}
-```
-
-The local CLI syncs `modifiedContent` back to the workspace.
-
 ## See also
 
 - `.agents/AGENTS.md` — sandbox-mounted copy (kept in sync)
-- `.agents/skills/` — `visual-design`, `text-changes`, `code-resolver`, `slide-editor`
-- `docs/antigravity-harness.md` — integration specification
+- `.agents/skills/` — `visual-design`, `text-changes`, `code-resolver`, `slide-editor`, `image-generation`
+- `docs/cursor-cli-architecture.md` — server and agent flow
