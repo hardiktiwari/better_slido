@@ -27,7 +27,20 @@ sequenceDiagram
   Poll-->>UI: applied, explanation
 ```
 
-Comments are **saved instantly** in the browser. The agent runs only when the user clicks **Done reviewing — apply with agent** (or when a client calls `POST /api/agent/review`).
+Comments are **saved instantly** in the browser. The Cursor CLI runs when:
+
+1. **Any comment is posted** on the slide (auto-queues; server prepends `@agent` if omitted), or
+2. The user clicks **Re-run agent on this slide** / **Run agent** in a comment popover, or
+3. A client calls `POST /api/agent/review` directly.
+
+The agent edits `src/App.tsx`, then the run moves to **`awaiting_review`** with `preFields` + `postFields` attached. The UI shows a before/after diff and the user clicks **Accept suggestion** or **Reject**.
+
+- **Accept** → `POST /api/agent/runs/:runId/accept` → deck state syncs from the (already-modified) file, comments resolve, run becomes `completed`.
+- **Reject** → `POST /api/agent/runs/:runId/reject` → server restores the pre-run snapshot of `src/App.tsx`, deck never changed, run becomes `rejected`.
+
+While a slide is in review, the Vite HMR resync skips that slide so the pending change doesn't apply implicitly.
+
+The slide strip shows **CLI on** / **CLI off** from `GET /api/env-check` (`agent login` required).
 
 ## Components
 

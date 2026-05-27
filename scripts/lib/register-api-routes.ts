@@ -3,7 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { probeCursorAuth } from "./cursor-cli.js";
 import { parseReviewBody } from "./parse-review-body.js";
-import { startBackgroundAgentReview, runAgentQueued } from "./agent-queue.js";
+import {
+  acceptAgentRun,
+  rejectAgentRun,
+  runAgentQueued,
+  startBackgroundAgentReview,
+} from "./agent-queue.js";
 import { readAgentTrace } from "./agent-trace.js";
 import { readSlideFieldsFromApp } from "./deck-source.js";
 import { getAgentRun } from "./agent-run-store.js";
@@ -119,6 +124,24 @@ export function registerApiRoutes(app: Express, options: RegisterApiRoutesOption
       return;
     }
     res.json(run);
+  });
+
+  app.post("/api/agent/runs/:runId/accept", (req, res) => {
+    const outcome = acceptAgentRun(req.params.runId);
+    if (!outcome.ok) {
+      res.status(409).json({ error: outcome.reason });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  app.post("/api/agent/runs/:runId/reject", (req, res) => {
+    const outcome = rejectAgentRun(cwd, req.params.runId);
+    if (!outcome.ok) {
+      res.status(409).json({ error: outcome.reason });
+      return;
+    }
+    res.json({ ok: true });
   });
 
   app.post("/api/webhook/comment", (req, res) => {

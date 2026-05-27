@@ -82,7 +82,20 @@ export async function executeAgentReview(
   }
 
   const fileContent = fs.readFileSync(appPath, "utf-8");
-  const lines = fileContent.split("\n");
+  let lines = fileContent.split("\n");
+
+  // Strip any pre-existing unresolved "// @agent: resolve:" directives — they're
+  // stale leftovers from earlier failed runs. Keeping them confuses the model
+  // (Composer 2 in particular tends to read+grep and bail out when faced with
+  // many pending directives in the same slide block). We only ever want the
+  // ONE directive we're about to insert to be active.
+  const staleCount = lines.filter((l) => /^\s*\/\/ @agent:\s*resolve:/.test(l)).length;
+  if (staleCount > 0) {
+    lines = lines.filter((l) => !/^\s*\/\/ @agent:\s*resolve:/.test(l));
+    console.log(
+      `[AgentReview] Stripped ${staleCount} stale unresolved @agent directive(s) before this run`,
+    );
+  }
 
   let targetLineIndex = -1;
   let insertedDirectiveLine: number | undefined;
