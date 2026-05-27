@@ -2,7 +2,27 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export type AgentRunPhase = "queued" | "running" | "completed" | "error";
+export type AgentRunPhase =
+  | "queued"
+  | "running"
+  | "awaiting_review"
+  | "completed"
+  | "rejected"
+  | "error";
+
+export interface SlideFieldsSnapshot {
+  tag?: string;
+  title?: string;
+  subtitle?: string;
+  bulletTextClass?: string;
+  subtitleClass?: string;
+  imageUrl?: string;
+  footerLeft?: string;
+  footerRight?: string;
+  bullets?: Array<{ text: string; icon: string }>;
+  pollOptions?: Array<{ text: string; votes: number }>;
+  commentary?: string;
+}
 
 export interface AgentRunResult {
   success: boolean;
@@ -20,6 +40,10 @@ export interface AgentRunResult {
   toolsCalled?: string[];
   directiveLine?: number;
   reasoning?: string;
+  /** Slide field values before the agent ran (for suggestion preview / rollback). */
+  preFields?: SlideFieldsSnapshot;
+  /** Slide field values after the agent applied changes. */
+  postFields?: SlideFieldsSnapshot;
 }
 
 /** Live + final trace shown in the presenter status bar. */
@@ -155,6 +179,23 @@ export function getAgentRun(id: string): AgentRunRecord | undefined {
     return fromDisk;
   }
   return undefined;
+}
+
+/** Memory-only pre-run file snapshots (so reject can roll the slide back). */
+const fileSnapshots = new Map<string, string>();
+
+export function storeRunFileSnapshot(runId: string, content: string): void {
+  fileSnapshots.set(runId, content);
+}
+
+export function takeRunFileSnapshot(runId: string): string | undefined {
+  const snap = fileSnapshots.get(runId);
+  fileSnapshots.delete(runId);
+  return snap;
+}
+
+export function hasRunFileSnapshot(runId: string): boolean {
+  return fileSnapshots.has(runId);
 }
 
 export function patchAgentRun(

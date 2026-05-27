@@ -31,14 +31,13 @@ import type {
 } from './types';
 import { CommentAnchor } from './components/InlineComment';
 import { AgentStatusBar } from './components/AgentStatusBar';
-import { useAgentReview } from './hooks/useAgentReview';
-import { fetchSlideSourceFields } from './lib/agent-api';
+import { useAgentReview, isSlideAwaitingReview } from './hooks/useAgentReview';
+import { fetchEnvCheck, fetchSlideSourceFields } from './lib/agent-api';
 import {
   applyPatchesToDeck,
   fetchAllSlideSourcePatches,
   mergeSlidesFromDefaults,
 } from './lib/deck-sync';
-
 // ---- Icons helper ----
 
 const BulletIcon = ({ name, className = 'w-5 h-5' }: { name: string; className?: string }) => {
@@ -57,11 +56,10 @@ const ALL_ICONS = ['sparkles', 'target', 'check', 'book', 'star', 'lightbulb'] a
 
 // ---- Default deck & questions ----
 
-const COMMENTS_STORAGE_KEY = 'better_slido_comments_v4';
+const COMMENTS_STORAGE_KEY = 'better_slido_comments_v5';
 
 const DEFAULT_DECK: Slide[] = [
   {
-    // @agent: resolve: @agent test
     id: 'slide-1',
     type: 'title',
     tag: 'CONFERENCE 2026',
@@ -72,17 +70,11 @@ const DEFAULT_DECK: Slide[] = [
     footerRight: 'Join at Slido.com #EduAI',
   },
   {
-    // @agent: resolved: [target:bullets] @agent please add 2 more bullets
-    // @agent: resolve: @agent Change tag to POST-RESTART TEST
-    // @agent: resolved: @agent Set tag text to QUEUE FIX OK
-    // @agent: resolved: [target:bullets] @agent Please add 2 more biulleets
-    // @agent: resolved: [target:bullets] @agent Make thsi black again
-    // @agent: resolved: @agent Set tag to DEDUPE TEST
-    // @agent: resolved: @agent Remvoe the image from slide and change it to 4 bulllets points
+    // @agent: resolved: @agent make title punchier for exec
     id: 'slide-2',
     type: 'bullet',
     tag: 'DEDUPE TEST',
-    title: 'AI for Education',
+    title: 'Education, Rebuilt for an AI-First World',
     subtitle: 'Personalizing learning at scale',
     bulletTextClass: 'slide-bullet-black',
     bullets: [
@@ -181,13 +173,26 @@ export default function App() {
 
   // ---- Comments & agent state ----
   const [comments, setComments] = useState<SlideComment[]>(() => {
-    localStorage.removeItem('better_slido_comments');
-    localStorage.removeItem('better_slido_comments_v2');
-    localStorage.removeItem('better_slido_comments_v3');
+    // One comment at a time — wipe any persisted thread from older versions.
+    for (const key of [
+      'better_slido_comments',
+      'better_slido_comments_v2',
+      'better_slido_comments_v3',
+      'better_slido_comments_v4',
+    ]) {
+      localStorage.removeItem(key);
+    }
     const saved = localStorage.getItem(COMMENTS_STORAGE_KEY);
     return saved ? JSON.parse(saved) : [];
   });
-  const { agentSession, applySlideReview, cancelAgent, agentBusy } = useAgentReview({
+  const {
+    agentSession,
+    applySlideReview,
+    cancelAgent,
+    acceptPendingReview,
+    rejectPendingReview,
+    agentBusy,
+  } = useAgentReview({
     deck,
     currentSlideIndex,
     comments,
@@ -196,11 +201,35 @@ export default function App() {
     mergeSlidesFromDefaults: mergeFromDefaults,
   });
 
+  const [cursorCliReady, setCursorCliReady] = useState<boolean | null>(null);
+  const [cursorCliEmail, setCursorCliEmail] = useState<string | undefined>();
+  const applySlideReviewRef = useRef(applySlideReview);
+  applySlideReviewRef.current = applySlideReview;
+  const agentBusyRef = useRef(agentBusy);
+  agentBusyRef.current = agentBusy;
+
+  useEffect(() => {
+    void fetchEnvCheck()
+      .then((d) => {
+        setCursorCliReady(d.hasKey);
+        setCursorCliEmail(d.email);
+      })
+      .catch(() => setCursorCliReady(false));
+  }, []);
+
   // ---- Derived state ----
 
   // Real deck slide for editing operations
   const activeSlide = deck[currentSlideIndex] ?? deck[0];
   const displaySlide = activeSlide;
+
+  const slideCommentAgentProps = {
+    agentSession,
+    onAcceptReview: acceptPendingReview,
+    onRejectReview: rejectPendingReview,
+    agentBusy,
+    cursorCliReady: cursorCliReady !== false,
+  };
 
   // On load: pull agent-edited fields from src/App.tsx (disk beats stale localStorage).
   useEffect(() => {
@@ -213,10 +242,18 @@ export default function App() {
   }, []);
 
   // When Vite HMR reloads App.tsx after the agent edits DEFAULT_DECK, refresh deck state.
+  // Skip slides currently in suggest-before-apply review — those changes are pending user accept.
   useEffect(() => {
     if (!import.meta.hot) return;
     const resync = () => {
-      setDeck((prev) => mergeSlidesFromDefaults(prev, defaultDeckRef.current));
+      setDeck((prev) =>
+        prev.map((slide) => {
+          if (isSlideAwaitingReview(slide.id)) return slide;
+          const src = defaultDeckRef.current.find((d) => d.id === slide.id);
+          if (!src) return slide;
+          return mergeSlidesFromDefaults([slide], [src])[0];
+        }),
+      );
     };
     import.meta.hot.accept(resync);
   }, []);
@@ -357,7 +394,20 @@ export default function App() {
       id: `c-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       createdAt: Date.now(),
     };
-    setComments((prev) => [newComment, ...prev]);
+    setComments((prev) => {
+      // One comment in flight at a time. Drop any older unresolved comments on
+      // the same slide so the agent only ever acts on the latest prompt.
+      const cleared = prev.filter(
+        (c) => c.slideId !== newComment.slideId || c.resolved,
+      );
+      const next = [newComment, ...cleared];
+      if (!agentBusyRef.current && cursorCliReady !== false) {
+        queueMicrotask(() =>
+          void applySlideReviewRef.current(newComment.slideId, [newComment]),
+        );
+      }
+      return next;
+    });
   };
 
   const handleResolveComment = (id: string) => {
@@ -514,7 +564,7 @@ export default function App() {
                 <CommentAnchor
                   slideId={activeSlide.id} field="tag"
                   comments={getFieldComments(activeSlide.id, 'tag')}
-                  onAddComment={handleAddComment} onResolveComment={handleResolveComment}
+                  onAddComment={handleAddComment} onResolveComment={handleResolveComment} {...slideCommentAgentProps}
                 >
                   {isEditing ? (
                     <input
@@ -532,7 +582,7 @@ export default function App() {
                 <CommentAnchor
                   slideId={activeSlide.id} field="title"
                   comments={getFieldComments(activeSlide.id, 'title')}
-                  onAddComment={handleAddComment} onResolveComment={handleResolveComment}
+                  onAddComment={handleAddComment} onResolveComment={handleResolveComment} {...slideCommentAgentProps}
                 >
                   {isEditing ? (
                     <textarea
@@ -552,7 +602,7 @@ export default function App() {
                 <CommentAnchor
                   slideId={activeSlide.id} field="subtitle"
                   comments={getFieldComments(activeSlide.id, 'subtitle')}
-                  onAddComment={handleAddComment} onResolveComment={handleResolveComment}
+                  onAddComment={handleAddComment} onResolveComment={handleResolveComment} {...slideCommentAgentProps}
                 >
                   {isEditing ? (
                     <textarea
@@ -612,7 +662,7 @@ export default function App() {
                             slideId={activeSlide.id}
                             field={`bullet-${bIdx}` as CommentField}
                             comments={getFieldComments(activeSlide.id, `bullet-${bIdx}` as CommentField)}
-                            onAddComment={handleAddComment} onResolveComment={handleResolveComment}
+                            onAddComment={handleAddComment} onResolveComment={handleResolveComment} {...slideCommentAgentProps}
                           >
                             {isEditing ? (
                               <div className="flex items-center gap-2 w-full">
@@ -662,7 +712,7 @@ export default function App() {
                               slideId={activeSlide.id}
                               field={`poll-${optIdx}` as CommentField}
                               comments={getFieldComments(activeSlide.id, `poll-${optIdx}` as CommentField)}
-                              onAddComment={handleAddComment} onResolveComment={handleResolveComment}
+                              onAddComment={handleAddComment} onResolveComment={handleResolveComment} {...slideCommentAgentProps}
                             >
                               {isEditing ? (
                                 <div className="flex items-center gap-2 flex-1 mr-4">
@@ -757,7 +807,7 @@ export default function App() {
                 <CommentAnchor
                   slideId={activeSlide.id} field="footerLeft"
                   comments={getFieldComments(activeSlide.id, 'footerLeft')}
-                  onAddComment={handleAddComment} onResolveComment={handleResolveComment}
+                  onAddComment={handleAddComment} onResolveComment={handleResolveComment} {...slideCommentAgentProps}
                 >
                   {isEditing ? (
                     <input
@@ -777,7 +827,7 @@ export default function App() {
                 <CommentAnchor
                   slideId={activeSlide.id} field="footerRight"
                   comments={getFieldComments(activeSlide.id, 'footerRight')}
-                  onAddComment={handleAddComment} onResolveComment={handleResolveComment}
+                  onAddComment={handleAddComment} onResolveComment={handleResolveComment} {...slideCommentAgentProps}
                 >
                   {isEditing ? (
                     <input
@@ -801,16 +851,36 @@ export default function App() {
           </div>
 
           {/* ─── Slide-level tag strip ─── */}
-          <div className="flex items-center justify-between px-1">
-            <span className="text-[11px] text-stone-400 font-medium">
-              Hover any field to comment on it, or tag the whole slide:
-            </span>
+          <div className="flex items-center justify-between px-1 gap-2 flex-wrap">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[11px] text-stone-400 font-medium">
+                Hover any field to comment — Cursor CLI drafts edits; you accept or reject
+              </span>
+              {cursorCliReady === true && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 shrink-0"
+                  title={cursorCliEmail ? `Logged in as ${cursorCliEmail}` : 'Cursor CLI ready'}
+                >
+                  <Bot className="w-3 h-3" />
+                  CLI on
+                </span>
+              )}
+              {cursorCliReady === false && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 shrink-0"
+                  title="Run agent login in the terminal where npm run dev is running"
+                >
+                  CLI off — run agent login
+                </span>
+              )}
+            </div>
             <CommentAnchor
               slideId={activeSlide.id}
               field="slide"
               comments={getFieldComments(activeSlide.id, 'slide')}
-                            onAddComment={handleAddComment}
-                            onResolveComment={handleResolveComment}
+              onAddComment={handleAddComment}
+              onResolveComment={handleResolveComment}
+              {...slideCommentAgentProps}
               trigger="children"
             >
               <button className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl border transition ${
@@ -829,24 +899,9 @@ export default function App() {
             </CommentAnchor>
           </div>
 
-          {/* ─── Review handoff + agent status ─── */}
-          {slideCommentCount(activeSlide.id) > 0 && (
-            <div className="flex items-center justify-between gap-3 px-1">
-              <p className="text-[11px] text-stone-500">
-                {slideCommentCount(activeSlide.id)} unresolved comment
-                {slideCommentCount(activeSlide.id) !== 1 ? 's' : ''} on this slide — click when ready.
-              </p>
-              <button
-                type="button"
-                onClick={() => applySlideReview(activeSlide.id)}
-                disabled={agentBusy}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white disabled:opacity-50 disabled:cursor-not-allowed transition"
-              >
-                <Bot className="w-3.5 h-3.5" />
-                Done reviewing — apply with agent
-              </button>
-            </div>
-          )}
+          {/* Thin one-line indicator stays as a fallback for users whose popover
+              is closed while the agent is running. Drafting / review / save now
+              live INSIDE the comment popover itself. */}
           <AgentStatusBar session={agentSession} onCancel={cancelAgent} />
 
           {/* ─── Deck navigation & manager ─── */}

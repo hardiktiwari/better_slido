@@ -65,6 +65,13 @@ function parseObjectArray<T>(
   return items.length > 0 ? items : undefined;
 }
 
+/** Parse slide fields from an in-memory App.tsx source string (used for pre-run snapshots). */
+export function readSlideFieldsFromSource(source: string, slideId: string): SlideSourcePatch {
+  const block = extractSlideBlock(source, slideId);
+  if (!block) return {};
+  return parseFieldsFromBlock(block);
+}
+
 /** Read agent-applied slide fields from src/App.tsx (source of truth after harness runs). */
 export function readSlideFieldsFromApp(cwd: string, slideId: string): SlideSourcePatch {
   const appPath = path.join(cwd, "src/App.tsx");
@@ -72,7 +79,10 @@ export function readSlideFieldsFromApp(cwd: string, slideId: string): SlideSourc
 
   const block = extractSlideBlock(fs.readFileSync(appPath, "utf-8"), slideId);
   if (!block) return {};
+  return parseFieldsFromBlock(block);
+}
 
+function parseFieldsFromBlock(block: string): SlideSourcePatch {
   const out: SlideSourcePatch = {};
   const tag = block.match(/tag:\s*'([^']*)'/);
   if (tag) out.tag = parseQuotedString(tag[1]);

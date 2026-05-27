@@ -289,6 +289,9 @@ function parseAgentJsonOutput(stdout: string): {
     .map((l) => l.trim())
     .filter(Boolean);
 
+  let sessionId: string | undefined;
+  let assistantText = "";
+
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (!line.startsWith("{")) continue;
@@ -298,23 +301,42 @@ function parseAgentJsonOutput(stdout: string): {
         subtype?: string;
         is_error?: boolean;
         result?: string;
+        text?: string;
         session_id?: string;
         duration_ms?: number;
+        message?: { content?: Array<{ type?: string; text?: string }> };
       };
+      if (parsed.session_id && !sessionId) sessionId = parsed.session_id;
       if (parsed.type === "result") {
         return {
           resultText: parsed.result ?? "",
-          sessionId: parsed.session_id,
+          sessionId: parsed.session_id ?? sessionId,
           durationMs: parsed.duration_ms,
           isError: parsed.is_error === true || parsed.subtype === "error",
         };
+      }
+      // Fallback: last assistant message text, if no result event was emitted.
+      if (parsed.type === "assistant" && !assistantText) {
+        const content = parsed.message?.content;
+        if (Array.isArray(content)) {
+          const text = content
+            .filter((c) => c?.type === "text" && typeof c.text === "string")
+            .map((c) => c.text as string)
+            .join("\n")
+            .trim();
+          if (text) assistantText = text;
+        }
       }
     } catch {
       // keep scanning
     }
   }
 
-  return { resultText: stdout.trim(), isError: false };
+  // We never want to dump raw NDJSON to the UI. If we couldn't find a
+  // structured `result` event, return either the last assistant message
+  // (if any) or an empty string. Downstream code surfaces a friendly
+  // error in that case.
+  return { resultText: assistantText, sessionId, isError: false };
 }
 
 /**

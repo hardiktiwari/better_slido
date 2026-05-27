@@ -121,7 +121,30 @@ export function toTargetElement(
 }
 
 // ---- Agent session lifecycle ----
-export type AgentStatus = 'idle' | 'queued' | 'thinking' | 'streaming' | 'applied' | 'error';
+export type AgentStatus =
+  | 'idle'
+  | 'queued'
+  | 'thinking'
+  | 'streaming'
+  | 'review'
+  | 'applied'
+  | 'error';
+
+/** Field-level before/after pair shown in the suggestion preview. */
+export interface SlideFieldDiff {
+  field: string;
+  kind: 'text' | 'bullets' | 'pollOptions' | 'class' | 'image';
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface PendingReview {
+  runId: string;
+  slideId: string;
+  commentIds: string[];
+  diffs: SlideFieldDiff[];
+  explanation?: string;
+}
 
 export interface AgentSession {
   status: AgentStatus;
@@ -144,6 +167,8 @@ export interface AgentSession {
   /** Comment that fired this session (if any) */
   triggerCommentId?: string;
   errorMessage?: string;
+  /** Populated when status === 'review'; cleared on accept/reject. */
+  pendingReview?: PendingReview;
 }
 
 export const AGENT_SESSION_IDLE: AgentSession = {

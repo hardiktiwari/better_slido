@@ -1,6 +1,26 @@
-import type { CommentField, CommentWebhookContext } from '../types';
+import type { BulletItem, CommentField, CommentWebhookContext, PollOption } from '../types';
 
-export type AgentRunPhase = 'queued' | 'running' | 'completed' | 'error';
+export type AgentRunPhase =
+  | 'queued'
+  | 'running'
+  | 'awaiting_review'
+  | 'completed'
+  | 'rejected'
+  | 'error';
+
+export interface SlideFieldsSnapshot {
+  tag?: string;
+  title?: string;
+  subtitle?: string;
+  bulletTextClass?: string;
+  subtitleClass?: string;
+  imageUrl?: string;
+  footerLeft?: string;
+  footerRight?: string;
+  bullets?: BulletItem[];
+  pollOptions?: PollOption[];
+  commentary?: string;
+}
 
 export interface AgentRunProgressSnapshot {
   stage?: string;
@@ -29,6 +49,8 @@ export interface AgentRunSnapshot {
     routedBy?: string;
     toolsCalled?: string[];
     reasoning?: string;
+    preFields?: SlideFieldsSnapshot;
+    postFields?: SlideFieldsSnapshot;
   };
 }
 
@@ -55,6 +77,22 @@ async function readErrorBody(res: Response): Promise<string> {
   } catch {
     return res.statusText;
   }
+}
+
+export interface EnvCheckSnapshot {
+  hasKey: boolean;
+  provider: string;
+  authMode?: string;
+  email?: string;
+  orchestratorMode?: string;
+}
+
+export async function fetchEnvCheck(): Promise<EnvCheckSnapshot> {
+  const res = await fetch('/api/env-check');
+  if (!res.ok) {
+    throw new AgentApiError(res.status, 'Could not reach agent API. Run npm run dev on port 3000.');
+  }
+  return (await res.json()) as EnvCheckSnapshot;
 }
 
 export async function fetchSlideSourceFields(slideId: string): Promise<Record<string, unknown> | null> {
@@ -93,6 +131,20 @@ export async function startAgentReview(body: {
   }
 
   return { runId: data.runId };
+}
+
+export async function acceptAgentRun(runId: string): Promise<void> {
+  const res = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/accept`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new AgentApiError(res.status, await readErrorBody(res));
+}
+
+export async function rejectAgentRun(runId: string): Promise<void> {
+  const res = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/reject`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new AgentApiError(res.status, await readErrorBody(res));
 }
 
 export async function fetchAgentRun(
